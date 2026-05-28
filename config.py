@@ -727,6 +727,34 @@ with open(constants_header_name, 'wt') as wfp:
     wfp.write("#define BLOCKHAMMER " + str(config_file.get('BLOCKHAMMER', 0)) + "\n")
     wfp.write("#define BH_BASELINE " + str(config_file.get('BH_BASELINE', 0)) + "\n")
 
+    # START / VTrack / RP-VTrack trackers (RP-VTrack project additions)
+    if config_file.get('START_ENABLE', 0):
+        print("[RH_DEFENSE] START ENABLE")
+        wfp.write("#define START_ENABLE 1\n")
+    else:
+        wfp.write("#define START_ENABLE 0\n")
+    if config_file.get('VTRACK_ENABLE', 0):
+        print("[RH_DEFENSE] VTRACK ENABLE")
+        wfp.write("#define VTRACK_ENABLE 1\n")
+    else:
+        wfp.write("#define VTRACK_ENABLE 0\n")
+    if config_file.get('RP_VTRACK_ENABLE', 0):
+        print("[RH_DEFENSE] RP_VTRACK ENABLE")
+        wfp.write("#define RP_VTRACK_ENABLE 1\n")
+    else:
+        wfp.write("#define RP_VTRACK_ENABLE 0\n")
+    if config_file.get('IMPRESS_N_ENABLE', 0):
+        print("[RH_DEFENSE] IMPRESS_N ENABLE")
+        wfp.write("#define IMPRESS_N_ENABLE 1\n")
+    else:
+        wfp.write("#define IMPRESS_N_ENABLE 0\n")
+    # RowPress amplification (ImPress-N constant-density model; rho_max=1 disables effect)
+    wfp.write("#define RHO_MAX " + str(config_file.get('RHO_MAX', 1)) + "\n")
+    # Physical-disturbance oracle assertion mode
+    if config_file.get('SAFETY_CHECK', 0):
+        print("[RH_DEFENSE] SAFETY_CHECK (physical disturbance oracle) ENABLE")
+        wfp.write("#define SAFETY_CHECK 1\n")
+
     # Common RH parameters
     wfp.write("#define RH_THRESHOLD " + str(config_file.get('RH_THRESHOLD', 64)) + "\n")
     wfp.write("#define RESERVE_RH_CAPACITY 268435456\n")

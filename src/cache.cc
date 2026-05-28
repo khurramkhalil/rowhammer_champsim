@@ -33,6 +33,25 @@ extern VirtualMemory vmem;
 extern uint8_t warmup_complete[NUM_CPUS];
 extern uint8_t all_warmup_complete;
 
+#ifndef START_ENABLE
+#define START_ENABLE 0
+#endif
+#ifndef VTRACK_ENABLE
+#define VTRACK_ENABLE 0
+#endif
+#ifndef RP_VTRACK_ENABLE
+#define RP_VTRACK_ENABLE 0
+#endif
+#ifndef IDEAL_TRACKER
+#define IDEAL_TRACKER 0
+#endif
+#ifndef ART_ENABLE
+#define ART_ENABLE 0
+#endif
+#ifndef HYDRA_ENABLE
+#define HYDRA_ENABLE 0
+#endif
+
 void CACHE::handle_fill()
 {
   while (writes_available_this_cycle > 0) {
@@ -796,7 +815,7 @@ void CACHE::performRHActions() {
   int max_actions = 2;
 
   for (auto it = lower_level->rhActions.begin(); it != lower_level->rhActions.end();) {
-    assert(ART_ENABLE || HYDRA_ENABLE || IDEAL_TRACKER);
+    assert(ART_ENABLE || HYDRA_ENABLE || IDEAL_TRACKER || VTRACK_ENABLE || START_ENABLE || RP_VTRACK_ENABLE);
     PACKET handle_pkt;
 
     handle_pkt.cpu = 0;
@@ -812,6 +831,12 @@ void CACHE::performRHActions() {
         return;
     }
     else {
+#ifdef SAFETY_CHECK
+      uint64_t v_idx = it->first / (DRAM_COLUMNS * BLOCK_SIZE);
+      if (v_idx < (DRAM_CHANNELS * DRAM_RANKS * DRAM_BANKS * DRAM_ROWS)) {
+        true_disturbance[v_idx] = 0;
+      }
+#endif
       handle_pkt.fill_level = fill_level;
       handle_pkt.to_return = {this};
       if (lower_level->get_occupancy(1, it->first) == lower_level->get_size(1, it->second))
@@ -843,11 +868,33 @@ void CACHE::recvACTInfo() {
       it = lower_level->ACTs.erase(it);
       continue;
     }
-    if (ART_ENABLE && (writes_available_this_cycle == 0 || reads_available_this_cycle == 0)) {
+
+    if ((ART_ENABLE || RP_VTRACK_ENABLE || VTRACK_ENABLE) && (writes_available_this_cycle == 0 || reads_available_this_cycle == 0)) {
       // Don't have cache bandwidth, try next cycle...
       break;
     }
-    if (ART_ENABLE) { // ART tracker
+#ifdef SAFETY_CHECK
+    uint64_t eact = it->eact;
+#ifdef RHO_MAX
+    eact = eact * RHO_MAX;
+#endif
+    for (int dir = -1; dir <= 1; dir += 2) {
+      if ((int)ro + dir >= 0 && (int)ro + dir < DRAM_ROWS) {
+        uint64_t v_idx = (ro + dir) * (DRAM_CHANNELS * DRAM_BANKS * DRAM_RANKS)
+                        + ra * (DRAM_CHANNELS * DRAM_BANKS)
+                        + ba * (DRAM_CHANNELS)
+                        + ch;
+        true_disturbance[v_idx] += eact;
+        if (true_disturbance[v_idx] > RH_THRESHOLD) {
+          if (ART_ENABLE || RP_VTRACK_ENABLE || VTRACK_ENABLE || BLOCKHAMMER) {
+            printf("SAFETY VIOLATION! row %ld reached %ld disturbance.\n", (ro + dir), true_disturbance[v_idx]);
+            assert(false);
+          }
+        }
+      }
+    }
+#endif
+    if (ART_ENABLE && !RP_VTRACK_ENABLE && !VTRACK_ENABLE) { // ART tracker
       writes_available_this_cycle--;
       reads_available_this_cycle--;
       s_num_ACT++;
@@ -948,11 +995,23 @@ void CACHE::recvACTInfo() {
             op_addr = BLOCK_SIZE * DRAM_COLUMNS * 
                       (ch + DRAM_CHANNELS * (ba + DRAM_BANKS * (ra + DRAM_RANKS * (ro - (i + 1)))));
             lower_level->rhActions.push_back(std::make_pair(op_addr, RH_MITIGATION));
+#ifdef SAFETY_CHECK
+              uint64_t _v_idx = op_addr / (BLOCK_SIZE * DRAM_COLUMNS);
+              if (_v_idx < (DRAM_CHANNELS * DRAM_RANKS * DRAM_BANKS * DRAM_ROWS)) {
+                  true_disturbance[_v_idx] = 0;
+              }
+#endif
           }
           if (ro < DRAM_ROWS - (i + 1)) {
             op_addr = BLOCK_SIZE * DRAM_COLUMNS * 
                       (ch + DRAM_CHANNELS * (ba + DRAM_BANKS * (ra + DRAM_RANKS * (ro + i + 1))));
             lower_level->rhActions.push_back(std::make_pair(op_addr, RH_MITIGATION));
+#ifdef SAFETY_CHECK
+              uint64_t _v_idx = op_addr / (BLOCK_SIZE * DRAM_COLUMNS);
+              if (_v_idx < (DRAM_CHANNELS * DRAM_RANKS * DRAM_BANKS * DRAM_ROWS)) {
+                  true_disturbance[_v_idx] = 0;
+              }
+#endif
           }
         }
       }
@@ -975,11 +1034,23 @@ void CACHE::recvACTInfo() {
             op_addr = BLOCK_SIZE * DRAM_COLUMNS * 
                       (ch + DRAM_CHANNELS * (ba + DRAM_BANKS * (ra + DRAM_RANKS * (ro - (i + 1)))));
             lower_level->rhActions.push_back(std::make_pair(op_addr, RH_MITIGATION));
+#ifdef SAFETY_CHECK
+              uint64_t _v_idx = op_addr / (BLOCK_SIZE * DRAM_COLUMNS);
+              if (_v_idx < (DRAM_CHANNELS * DRAM_RANKS * DRAM_BANKS * DRAM_ROWS)) {
+                  true_disturbance[_v_idx] = 0;
+              }
+#endif
           }
           if (ro < DRAM_ROWS - (i + 1)) {
             op_addr = BLOCK_SIZE * DRAM_COLUMNS * 
                       (ch + DRAM_CHANNELS * (ba + DRAM_BANKS * (ra + DRAM_RANKS * (ro + i + 1))));
             lower_level->rhActions.push_back(std::make_pair(op_addr, RH_MITIGATION));
+#ifdef SAFETY_CHECK
+              uint64_t _v_idx = op_addr / (BLOCK_SIZE * DRAM_COLUMNS);
+              if (_v_idx < (DRAM_CHANNELS * DRAM_RANKS * DRAM_BANKS * DRAM_ROWS)) {
+                  true_disturbance[_v_idx] = 0;
+              }
+#endif
           }
         }
       }
@@ -999,7 +1070,96 @@ void CACHE::recvACTInfo() {
         }
       }
     }
-    else { // Record basic stats and implement IT mitigations if required
+    if (RP_VTRACK_ENABLE || VTRACK_ENABLE) {
+      writes_available_this_cycle--;
+      reads_available_this_cycle--;
+      
+      uint64_t eact = 1;
+#ifdef IMPRESS_N_ENABLE
+      if (IMPRESS_N_ENABLE) {
+        eact = it->eact;
+#ifdef RHO_MAX
+        eact = eact * RHO_MAX;
+#endif
+      }
+#endif
+
+      uint64_t scale_s = 1;
+#ifdef RP_VTRACK_ENABLE
+      if (RP_VTRACK_ENABLE) {
+          scale_s = 16; 
+          eact = it->eact; // Use eact as the base density ρ(t_open)
+#ifdef RHO_MAX
+          eact = eact * RHO_MAX;
+#endif
+      }
+#endif
+
+      // VTrack tracks victims (ro-1 and ro+1)
+      for (int dir = -1; dir <= 1; dir += 2) {
+          if ((int)ro + dir < 0 || (int)ro + dir >= (int)DRAM_ROWS) continue;
+          uint64_t victim_ro = ro + dir;
+          uint64_t v_idx = victim_ro + DRAM_ROWS * (ba + DRAM_BANKS * (ra + DRAM_RANKS * ch));
+          uint64_t set_idx = v_idx / rows_per_set;
+          
+          uint32_t metadata_capacity = 16;
+          if (RP_VTRACK_ENABLE) {
+              metadata_capacity = 12; // Larger counters mean fewer fit in the 8-way LLC reservation
+          }
+          
+          if (CRA_ctr[v_idx] == 0) {
+              if (CRA_ctr_set[set_idx] < metadata_capacity) {
+                  CRA_ctr_set[set_idx]++;
+              } else {
+                  // VTrack-MM Equivalent Overflow: Spill to DRAM
+                  uint64_t op_addr = (MEM_BYTES - RESERVE_RH_CAPACITY) + 2*v_idx;
+                  lower_level->rhActions.push_back(std::make_pair(op_addr, RH_UPDATE)); // Evict dirty
+                  op_addr = (MEM_BYTES - RESERVE_RH_CAPACITY) + 2*v_idx + 64;
+                  lower_level->rhActions.push_back(std::make_pair(op_addr, RH_READ));   // Fetch missing
+                  s_mm_set_evicts++;
+                  s_mm_set_misses++;
+                  CRA_ctr_set[set_idx]++;
+              }
+          } else if (CRA_ctr_set[set_idx] > metadata_capacity) {
+              // Simulating cache misses probabilistically for tracking beyond capacity
+              uint32_t randVal = std::rand() % CRA_ctr_set[set_idx]; 
+              uint32_t numUncachedCtrs = CRA_ctr_set[set_idx] - metadata_capacity;
+              if (randVal < numUncachedCtrs) {
+                  uint64_t op_addr = (MEM_BYTES - RESERVE_RH_CAPACITY) + 2*v_idx;
+                  lower_level->rhActions.push_back(std::make_pair(op_addr, RH_UPDATE));
+                  op_addr = (MEM_BYTES - RESERVE_RH_CAPACITY) + 2*v_idx + 64;
+                  lower_level->rhActions.push_back(std::make_pair(op_addr, RH_READ));
+                  s_mm_set_misses++;
+              }
+          }
+          
+          CRA_ctr[v_idx] += (eact * scale_s);
+          
+          // S0(max 1), S1(max 7), S2(max 127), S3(max 32767) scaled by S
+          if (CRA_ctr[v_idx] > (127 * scale_s)) per_set_tracker_state[set_idx] = 3;
+          else if (CRA_ctr[v_idx] > (7 * scale_s) && per_set_tracker_state[set_idx] < 2) per_set_tracker_state[set_idx] = 2;
+          else if (CRA_ctr[v_idx] > (1 * scale_s) && per_set_tracker_state[set_idx] < 1) per_set_tracker_state[set_idx] = 1;
+          
+          if (CRA_ctr[v_idx] >= ((RH_THRESHOLD / 2) * scale_s)) {
+              s_num_mits++;
+              num_mits++;
+              uint64_t op_addr = BLOCK_SIZE * DRAM_COLUMNS * 
+                        (ch + DRAM_CHANNELS * (ba + DRAM_BANKS * (ra + DRAM_RANKS * victim_ro)));
+              lower_level->rhActions.push_back(std::make_pair(op_addr, RH_MITIGATION));
+#ifdef SAFETY_CHECK
+              uint64_t _v_idx = op_addr / (BLOCK_SIZE * DRAM_COLUMNS);
+              if (_v_idx < (DRAM_CHANNELS * DRAM_RANKS * DRAM_BANKS * DRAM_ROWS)) {
+                  true_disturbance[_v_idx] = 0;
+              }
+#endif
+              CRA_ctr[v_idx] = 0; // Reset after mitigation
+#ifdef SAFETY_CHECK
+              true_disturbance[v_idx] = 0; // Clear true_disturbance immediately when queued!
+#endif
+          }
+      }
+    }
+    else if (!ART_ENABLE) { // Record basic stats and implement IT mitigations if required
       s_num_ACT++;
       num_ACT++;
       if (isUniqRow[CRA_idx] == false) {
@@ -1021,11 +1181,23 @@ void CACHE::recvACTInfo() {
               op_addr = BLOCK_SIZE * DRAM_COLUMNS * 
                         (ch + DRAM_CHANNELS * (ba + DRAM_BANKS * (ra + DRAM_RANKS * (ro - (i + 1)))));
               lower_level->rhActions.push_back(std::make_pair(op_addr, RH_MITIGATION));
+#ifdef SAFETY_CHECK
+              uint64_t _v_idx = op_addr / (BLOCK_SIZE * DRAM_COLUMNS);
+              if (_v_idx < (DRAM_CHANNELS * DRAM_RANKS * DRAM_BANKS * DRAM_ROWS)) {
+                  true_disturbance[_v_idx] = 0;
+              }
+#endif
             }
             if (ro < DRAM_ROWS - (i + 1)) {
               op_addr = BLOCK_SIZE * DRAM_COLUMNS * 
                         (ch + DRAM_CHANNELS * (ba + DRAM_BANKS * (ra + DRAM_RANKS * (ro + i + 1))));
               lower_level->rhActions.push_back(std::make_pair(op_addr, RH_MITIGATION));
+#ifdef SAFETY_CHECK
+              uint64_t _v_idx = op_addr / (BLOCK_SIZE * DRAM_COLUMNS);
+              if (_v_idx < (DRAM_CHANNELS * DRAM_RANKS * DRAM_BANKS * DRAM_ROWS)) {
+                  true_disturbance[_v_idx] = 0;
+              }
+#endif
             }
           }
         }
