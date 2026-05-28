@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <unordered_map>
 #include "champsim.h"
 #include "champsim_constants.h"
 #include "util.h"
@@ -25,6 +26,13 @@
 
 #ifndef SANITY_CHECK
 #define NDEBUG
+#endif
+
+#ifdef SAFETY_CHECK
+// Physical-disturbance oracle keyed by global victim row index.
+// RP-VTrack assertion mode: tracks the true CLoss(v, t) under the unified
+// model and aborts if any victim crosses RH_THRESHOLD before a mitigation.
+static std::unordered_map<uint64_t, uint64_t> true_disturbance;
 #endif
 
 #define MEM_BYTES (DRAM_CHANNELS * DRAM_RANKS * DRAM_BANKS * DRAM_ROWS * DRAM_COLUMNS * BLOCK_SIZE)

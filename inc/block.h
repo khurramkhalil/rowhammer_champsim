@@ -33,8 +33,11 @@ struct ACTInfo
   uint64_t ra = 0;
   uint64_t ba = 0;
   uint64_t ro = 0;
-  ACTInfo(uint64_t _ch, uint64_t _ra, uint64_t _ba, uint64_t _ro)
-          : ch(_ch), ra(_ra), ba(_ba), ro(_ro) {}
+  // RP-VTrack: ImPress-N equivalent activations for this ACT. Defaults to 1
+  // and is overridden by the DRAMSim3 wrapper when t_open accounting is wired.
+  uint64_t eact = 1;
+  ACTInfo(uint64_t _ch, uint64_t _ra, uint64_t _ba, uint64_t _ro, uint64_t _eact = 1)
+          : ch(_ch), ra(_ra), ba(_ba), ro(_ro), eact(_eact) {}
 };
 
 // message packet
