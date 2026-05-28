@@ -26,9 +26,10 @@ public:
                                             std::bind(&DRAMSim3_DRAM::ReadCallBack, this, std::placeholders::_1),
                                             std::bind(&DRAMSim3_DRAM::WriteCallBack, this, std::placeholders::_1));
             std::cout << "DRAMSim3_DRAM init -- fixed meta-RQ size" << std::endl;   
-            memory_system_->RegisterACTCallback(std::bind(&DRAMSim3_DRAM::ACTCallBack, this, 
-                                                std::placeholders::_1, std::placeholders::_2, 
-                                                std::placeholders::_3, std::placeholders::_4));
+            memory_system_->RegisterACTCallback(std::bind(&DRAMSim3_DRAM::ACTCallBack, this,
+                                                std::placeholders::_1, std::placeholders::_2,
+                                                std::placeholders::_3, std::placeholders::_4,
+                                                std::placeholders::_5));
             if (HYDRA_ENABLE) {
                 std::cout << "[RH_DEFENSE] HydraVicRef ENABLED" << std::endl;
                 detector = new Hydra(HYDRA_ROW_GROUP_SIZE, RH_THRESHOLD/2, DRAM_ROWS, 
@@ -225,9 +226,9 @@ public:
         }
     }
     void WriteCallBack(uint64_t addr) { return; }
-    void ACTCallBack(uint64_t ch, uint64_t ra, uint64_t ba, uint64_t ro) {
-        ACTs.push_back(ACTInfo(ch, ra, ba, ro));
-        //DEBUG std::cout << "[ACT] Ch-" << ch << " Ra-" << ra << " Ba-" << ba << " Ro-" << ro << std::endl;
+    void ACTCallBack(uint64_t ch, uint64_t ra, uint64_t ba, uint64_t ro, uint64_t eact) {
+        ACTs.push_back(ACTInfo(ch, ra, ba, ro, eact));
+        //DEBUG std::cout << "[ACT] Ch-" << ch << " Ra-" << ra << " Ba-" << ba << " Ro-" << ro << " eact-" << eact << std::endl;
     }
     void PrintStats() { memory_system_->PrintStats(); }
 protected:
