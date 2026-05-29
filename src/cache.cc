@@ -882,9 +882,15 @@ void CACHE::recvACTInfo() {
       break;
     }
 #ifdef SAFETY_CHECK
-    uint64_t eact = it->eact;
+    // Phase 1 of the oracle: accumulate physical disturbance using the
+    // worst-case ImPress-N bound (eact * RHO_MAX). The violation check
+    // happens *after* the tracker block below, so that any mitigation
+    // queued by the tracker (which also resets true_disturbance to 0)
+    // is correctly credited. See the matching SAFETY_CHECK block at the
+    // end of this loop iteration.
+    uint64_t safety_eact = it->eact;
 #ifdef RHO_MAX
-    eact = eact * RHO_MAX;
+    safety_eact = safety_eact * RHO_MAX;
 #endif
     for (int dir = -1; dir <= 1; dir += 2) {
       if ((int)ro + dir >= 0 && (int)ro + dir < DRAM_ROWS) {
@@ -892,24 +898,7 @@ void CACHE::recvACTInfo() {
                         + ra * (DRAM_CHANNELS * DRAM_BANKS)
                         + ba * (DRAM_CHANNELS)
                         + ch;
-        true_disturbance[v_idx] += eact;
-        if (true_disturbance[v_idx] > RH_THRESHOLD) {
-          // The oracle is a measurement tool, not an abort guard. Schemes
-          // that are theoretically unsafe under adaptive eact (vanilla
-          // VTrack without ImPress, vanilla START, etc.) deliberately
-          // exhibit violations here; we want to count them, not crash the
-          // sim. The count is exposed at end-of-sim as s_safety_violations.
-          s_safety_violations++;
-          if (s_safety_violations <= 4) {
-            // Print the first few so debugging is still possible without
-            // drowning the output.
-            printf("SAFETY VIOLATION! row %ld reached %ld disturbance (count %lu).\n",
-                   (ro + dir), true_disturbance[v_idx], s_safety_violations);
-          }
-          // Reset this victim so we don't keep counting the same overflow
-          // every subsequent ACT.
-          true_disturbance[v_idx] = 0;
-        }
+        true_disturbance[v_idx] += safety_eact;
       }
     }
 #endif
@@ -1226,6 +1215,30 @@ void CACHE::recvACTInfo() {
         s_row_ACT[CRA_ctr[CRA_idx]/10 > 99 ? 99 : CRA_ctr[CRA_idx]/10]++;
       }
     }
+#ifdef SAFETY_CHECK
+    // Phase 2 of the oracle: now that the tracker has had a chance to
+    // queue a mitigation (which resets true_disturbance for the affected
+    // victim, see RH_MITIGATION reset blocks above), check whether any
+    // victim of this ACT still exceeds RH_THRESHOLD. If yes, the tracker
+    // failed to prevent a real RowHammer/RowPress event for that victim.
+    for (int dir = -1; dir <= 1; dir += 2) {
+      if ((int)ro + dir >= 0 && (int)ro + dir < DRAM_ROWS) {
+        uint64_t v_idx = (ro + dir) * (DRAM_CHANNELS * DRAM_BANKS * DRAM_RANKS)
+                        + ra * (DRAM_CHANNELS * DRAM_BANKS)
+                        + ba * (DRAM_CHANNELS)
+                        + ch;
+        if (true_disturbance[v_idx] > RH_THRESHOLD) {
+          s_safety_violations++;
+          if (s_safety_violations <= 4) {
+            printf("SAFETY VIOLATION! row %ld reached %ld disturbance (count %lu).\n",
+                   (ro + dir), true_disturbance[v_idx], s_safety_violations);
+          }
+          // Reset so we don't keep counting the same overflow forever.
+          true_disturbance[v_idx] = 0;
+        }
+      }
+    }
+#endif
     it = lower_level->ACTs.erase(it);
   }
 }
