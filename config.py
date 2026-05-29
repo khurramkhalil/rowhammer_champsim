@@ -754,6 +754,12 @@ with open(constants_header_name, 'wt') as wfp:
     if config_file.get('SAFETY_CHECK', 0):
         print("[RH_DEFENSE] SAFETY_CHECK (physical disturbance oracle) ENABLE")
         wfp.write("#define SAFETY_CHECK 1\n")
+    # Phase R1.0 saturation characterization. When enabled, the dramsim3
+    # wrapper logs every post-warmup ACT to $RP_CHARAC_LOG for later
+    # analysis by paper/scripts/analyse_saturation.py.
+    if config_file.get('CHARACTERIZE', 0):
+        print("[RP_VTRACK] CHARACTERIZE (saturation experiment) ENABLE")
+        wfp.write("#define CHARACTERIZE 1\n")
 
     # Common RH parameters
     wfp.write("#define RH_THRESHOLD " + str(config_file.get('RH_THRESHOLD', 64)) + "\n")
