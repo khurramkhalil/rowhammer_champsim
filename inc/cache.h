@@ -72,6 +72,12 @@ public:
   uint64_t s_num_mits = 0;
   uint64_t s_mm_set_evicts = 0;
   uint64_t s_mm_set_misses = 0;
+  // SAFETY_CHECK oracle: number of times the physical-disturbance model
+  // crossed RH_THRESHOLD for a victim row before the tracker triggered a
+  // mitigation. For schemes that are sound under adaptive eact this stays
+  // at 0; for theoretically unsafe schemes (e.g. vanilla VTrack without
+  // ImPress when t_open > tRAS) it grows. Counted, not asserted.
+  uint64_t s_safety_violations = 0;
   uint64_t s_row_ACT[100] = {};
   uint64_t s_early_writebacks = 0;
   uint64_t s_ctr_way_data_wb = 0;

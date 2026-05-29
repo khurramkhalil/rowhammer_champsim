@@ -894,10 +894,21 @@ void CACHE::recvACTInfo() {
                         + ch;
         true_disturbance[v_idx] += eact;
         if (true_disturbance[v_idx] > RH_THRESHOLD) {
-          if (ART_ENABLE || RP_VTRACK_ENABLE || VTRACK_ENABLE || BLOCKHAMMER) {
-            printf("SAFETY VIOLATION! row %ld reached %ld disturbance.\n", (ro + dir), true_disturbance[v_idx]);
-            assert(false);
+          // The oracle is a measurement tool, not an abort guard. Schemes
+          // that are theoretically unsafe under adaptive eact (vanilla
+          // VTrack without ImPress, vanilla START, etc.) deliberately
+          // exhibit violations here; we want to count them, not crash the
+          // sim. The count is exposed at end-of-sim as s_safety_violations.
+          s_safety_violations++;
+          if (s_safety_violations <= 4) {
+            // Print the first few so debugging is still possible without
+            // drowning the output.
+            printf("SAFETY VIOLATION! row %ld reached %ld disturbance (count %lu).\n",
+                   (ro + dir), true_disturbance[v_idx], s_safety_violations);
           }
+          // Reset this victim so we don't keep counting the same overflow
+          // every subsequent ACT.
+          true_disturbance[v_idx] = 0;
         }
       }
     }

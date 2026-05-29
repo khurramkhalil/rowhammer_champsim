@@ -179,6 +179,7 @@ void print_roi_stats(uint32_t cpu, CACHE* cache)
     cout << "LLC_RH_CUR_NUM_MIT " << cache->num_mits << std::endl;
     cout << "LLC_RH_MM_SET_EVICTS " << cache->s_mm_set_evicts << std::endl;
     cout << "LLC_RH_MM_SET_MISSES " << cache->s_mm_set_misses << std::endl;
+    cout << "LLC_RH_SAFETY_VIOLATIONS " << cache->s_safety_violations << std::endl;
     cout << std::endl;
     for (int i = 0; i < 100; i++) {
       cout << "LLC_RH_TOT_ROW_ACT_HIST_" << i*10+1 << " " << cache->s_row_ACT[i] << std::endl;
