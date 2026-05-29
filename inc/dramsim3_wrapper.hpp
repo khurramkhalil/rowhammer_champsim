@@ -7,11 +7,33 @@
 #include "dramsim3.h"
 #include "util.h"
 
+#ifdef CHARACTERIZE
+#include <cstdio>
+#include <cstdlib>
+#endif
+
 namespace dramsim3 {
     class MemorySystem;
 };
 
 extern uint8_t all_warmup_complete;
+
+#ifdef CHARACTERIZE
+// Phase R1.0 saturation characterization: log (cycle, ch, ra, ba, ro, eact)
+// per ACT to a binary file once warmup is complete. Downstream analysis
+// (paper/scripts/analyse_saturation.py) computes the eact distribution and
+// the implied ImPress CLM headroom from these records. Path set via the
+// environment variable RP_CHARAC_LOG; defaults to /tmp/rp_charac.bin if
+// unset so a missed export does not silently swallow the run.
+struct RP_CharacRecord {
+    uint64_t cycle;
+    uint32_t ch;
+    uint32_t ra;
+    uint32_t ba;
+    uint64_t ro;
+    uint64_t eact;
+} __attribute__((packed));
+#endif
 
 // This is a wrapper so DRAMSim (which only returns trans. addr) can communicate
 // with ChampSim API (which requires explicit packet->to_return->return_data calls)
@@ -229,11 +251,41 @@ public:
     void ACTCallBack(uint64_t ch, uint64_t ra, uint64_t ba, uint64_t ro, uint64_t eact) {
         ACTs.push_back(ACTInfo(ch, ra, ba, ro, eact));
         //DEBUG std::cout << "[ACT] Ch-" << ch << " Ra-" << ra << " Ba-" << ba << " Ro-" << ro << " eact-" << eact << std::endl;
+#ifdef CHARACTERIZE
+        // Only log post-warmup so the trace replay's startup transient does
+        // not skew the eact distribution.
+        if (all_warmup_complete > NUM_CPUS) {
+            if (charac_log_ == nullptr) {
+                const char* path = std::getenv("RP_CHARAC_LOG");
+                if (path == nullptr) path = "/tmp/rp_charac.bin";
+                charac_log_ = std::fopen(path, "wb");
+            }
+            if (charac_log_ != nullptr) {
+                RP_CharacRecord rec = { current_cycle,
+                                        static_cast<uint32_t>(ch),
+                                        static_cast<uint32_t>(ra),
+                                        static_cast<uint32_t>(ba),
+                                        ro, eact };
+                std::fwrite(&rec, sizeof(rec), 1, charac_log_);
+            }
+        }
+#endif
     }
-    void PrintStats() { memory_system_->PrintStats(); }
+    void PrintStats() {
+        memory_system_->PrintStats();
+#ifdef CHARACTERIZE
+        if (charac_log_ != nullptr) {
+            std::fclose(charac_log_);
+            charac_log_ = nullptr;
+        }
+#endif
+    }
 protected:
     dramsim3::MemorySystem* memory_system_;
     std::vector<PACKET> RQ{DRAM_RQ_SIZE*DRAM_CHANNELS}; // Meta-RQ for callbacks
+#ifdef CHARACTERIZE
+    FILE* charac_log_ = nullptr;
+#endif
 };
 
 #endif
