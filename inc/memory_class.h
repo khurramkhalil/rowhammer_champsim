@@ -18,6 +18,7 @@
 #define MEMORY_CLASS_H
 
 #include <limits>
+#include <deque>
 #include "rowhammer_detector.h"
 #include "block.h"
 
@@ -60,7 +61,14 @@ public:
 
   const unsigned fill_level;
   std::vector<ACTInfo> ACTs;
-  std::vector<std::pair<uint64_t, uint8_t>> rhActions;
+  // rhActions is consumed FIFO from begin() in handle_fill(). std::vector
+  // erase-from-front is O(n); under workloads with heavy mitigation traffic
+  // (e.g. lbm under ImPress generates ~60k mits per million ROI
+  // instructions, queue grows to tens of thousands of entries), this caused
+  // catastrophic super-linear slowdown (1M ROI on lbm timed out at 600s
+  // vs ~108s linear extrapolation from 500K ROI). std::deque has O(1)
+  // pop_front(), restoring linear scaling.
+  std::deque<std::pair<uint64_t, uint8_t>> rhActions;
   RH_Detector *detector;
   uint64_t numPPages;
   bool *procPageAccess;;
