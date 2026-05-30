@@ -80,12 +80,23 @@ public:
         auto rq_it = std::find_if(std::begin(RQ), std::end(RQ), 
                                     eq_addr<PACKET>(packet->address, LOG2_BLOCK_SIZE));
         if (rq_it != std::end(RQ)) { // Duplicate found
-            std::cout << "[Meta-RQ] duplicate rq_it->type: " << int(rq_it->type) 
-                        << " rq_it->address: " << rq_it->address
-                        << " rq_it->cpu: " << rq_it->cpu
-                        << " pkt->type: " << int(packet->type) 
-                        << " pkt->address: " << packet->address
-                        << " pkt->cpu: " << packet->cpu << std::endl;
+            // Rate-limit the debug print. Memory-pressure workloads with
+            // heavy mitigation traffic (e.g. lbm under VTrack+ImPress at
+            // TRH=64) generate millions of legitimate duplicate-merges
+            // per sim; the unconditional printf below was the dominant
+            // wall-time cost (~5 us per call) and caused 30-min timeouts
+            // on lbm. Logging the first few is sufficient for debugging.
+            static uint64_t s_dup_count = 0;
+            ++s_dup_count;
+            if (s_dup_count <= 4) {
+                std::cout << "[Meta-RQ] duplicate rq_it->type: " << int(rq_it->type)
+                            << " rq_it->address: " << rq_it->address
+                            << " rq_it->cpu: " << rq_it->cpu
+                            << " pkt->type: " << int(packet->type)
+                            << " pkt->address: " << packet->address
+                            << " pkt->cpu: " << packet->cpu
+                            << " (count " << s_dup_count << ")" << std::endl;
+            }
             if (rq_it->type >= RH_MITIGATION) {
                 if (packet->type < RH_MITIGATION) { // rq_it: RH-access and pkt: proc access
                     if (rq_it->type == RH_UPDATE) { // Ensure write is performed (later)
