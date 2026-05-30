@@ -886,22 +886,52 @@ void CACHE::recvACTInfo() {
     }
 #ifdef SAFETY_CHECK
     // Phase 1 of the oracle: accumulate physical disturbance using the
-    // worst-case ImPress-N bound (eact * RHO_MAX). The violation check
-    // happens *after* the tracker block below, so that any mitigation
-    // queued by the tracker (which also resets true_disturbance to 0)
-    // is correctly credited. See the matching SAFETY_CHECK block at the
-    // end of this loop iteration.
-    uint64_t safety_eact = it->eact;
-#ifdef RHO_MAX
-    safety_eact = safety_eact * RHO_MAX;
+    // worst-case measured Luo et al. ISCA 2023 envelope (Section 4.2,
+    // Fig 6, Mfr S 8Gb B-Die single-sided 50C). The Luo curve is
+    // **piecewise** (saturates in the short regime, super-linear in the
+    // middle, linear-in-t in the long tail), so it is not the same as
+    // ImPress's linear CLM bound.
+    //
+    // Per-ACT rho expressed at fixed-point scale 100 (so rho=1.00
+    // becomes 100, rho=1.17 becomes 117, etc.) to keep the oracle
+    // integer-domain. The threshold check below is correspondingly
+    // scaled by 100.
+    //
+    // Anchors (t_AggON, rho * 100):
+    //   (36 ns,    100)   short regime baseline
+    //   (186 ns,   117)   short regime upper bound per Sec 4.2
+    //   (7800 ns,  5900)  worst-case at 7.8us (8Gb B-Die)
+    //   (70200 ns, 53700) worst-case at 70.2us per Obs 1
+    auto luo_worst_rho_x100 = [](uint64_t raw_eact, double tras_ns) -> uint64_t {
+        double t_on = static_cast<double>(raw_eact) * tras_ns;
+        auto interp_log = [](double t, double t_lo, double t_hi,
+                             double r_lo, double r_hi) -> uint64_t {
+            double frac = (std::log(t) - std::log(t_lo)) /
+                          (std::log(t_hi) - std::log(t_lo));
+            double log_r = std::log(r_lo) + frac * (std::log(r_hi) - std::log(r_lo));
+            return static_cast<uint64_t>(std::exp(log_r) + 0.5);
+        };
+        if (t_on <= 36.0)      return 100;
+        if (t_on <= 186.0)     return interp_log(t_on, 36.0, 186.0, 100.0, 117.0);
+        if (t_on <= 7800.0)    return interp_log(t_on, 186.0, 7800.0, 117.0, 5900.0);
+        if (t_on <= 70200.0)   return interp_log(t_on, 7800.0, 70200.0, 5900.0, 53700.0);
+        // Long-tail extrapolation: linear in t_on past 70.2us.
+        return static_cast<uint64_t>(53700.0 * t_on / 70200.0 + 0.5);
+    };
+    // tRAS in ns. champsim_constants.h only emits tRP / tRCD via config.py,
+    // not tRAS, so we hardcode the DDR5 baseline value (32 ns) here. For
+    // other DRAM configs, override via -DRP_TRAS_NS=<value> in CPPFLAGS.
+#ifndef RP_TRAS_NS
+#define RP_TRAS_NS 32.0
 #endif
+    uint64_t safety_rho_x100 = luo_worst_rho_x100(it->eact, RP_TRAS_NS);
     for (int dir = -1; dir <= 1; dir += 2) {
       if ((int)ro + dir >= 0 && (int)ro + dir < DRAM_ROWS) {
         uint64_t v_idx = (ro + dir) * (DRAM_CHANNELS * DRAM_BANKS * DRAM_RANKS)
                         + ra * (DRAM_CHANNELS * DRAM_BANKS)
                         + ba * (DRAM_CHANNELS)
                         + ch;
-        true_disturbance[v_idx] += safety_eact;
+        true_disturbance[v_idx] += safety_rho_x100;
       }
     }
 #endif
@@ -1282,13 +1312,17 @@ void CACHE::recvACTInfo() {
                         + ra * (DRAM_CHANNELS * DRAM_BANKS)
                         + ba * (DRAM_CHANNELS)
                         + ch;
-        if (true_disturbance[v_idx] > RH_THRESHOLD) {
+        // true_disturbance is in units of rho * 100 (see Phase 1 above).
+        // Violation triggers when accumulated rho * 100 exceeds
+        // RH_THRESHOLD * 100, i.e., when the integer victim has
+        // accumulated >= RH_THRESHOLD RowHammer-equivalent ACTs of
+        // measured-Luo-worst-case physical disturbance.
+        if (true_disturbance[v_idx] > (uint64_t)RH_THRESHOLD * 100) {
           s_safety_violations++;
           if (s_safety_violations <= 4) {
-            printf("SAFETY VIOLATION! row %ld reached %ld disturbance (count %lu).\n",
+            printf("SAFETY VIOLATION! row %ld reached %lu disturbance*100 (count %lu).\n",
                    (ro + dir), true_disturbance[v_idx], s_safety_violations);
           }
-          // Reset so we don't keep counting the same overflow forever.
           true_disturbance[v_idx] = 0;
         }
       }
