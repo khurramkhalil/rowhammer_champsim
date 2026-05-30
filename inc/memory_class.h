@@ -60,14 +60,16 @@ public:
    */
 
   const unsigned fill_level;
-  std::vector<ACTInfo> ACTs;
-  // rhActions is consumed FIFO from begin() in handle_fill(). std::vector
-  // erase-from-front is O(n); under workloads with heavy mitigation traffic
-  // (e.g. lbm under ImPress generates ~60k mits per million ROI
-  // instructions, queue grows to tens of thousands of entries), this caused
-  // catastrophic super-linear slowdown (1M ROI on lbm timed out at 600s
-  // vs ~108s linear extrapolation from 500K ROI). std::deque has O(1)
-  // pop_front(), restoring linear scaling.
+  // ACTs and rhActions are both consumed FIFO via begin()-iteration with
+  // erase(it). std::vector::erase at the front is O(n) (shifts the tail
+  // down by one), making the consumer O(n^2) over the queue size when
+  // production rate exceeds drain rate. Under workloads with heavy
+  // mitigation traffic (lbm under ImPress generates ~60k mits per million
+  // ROI instructions, both queues grow to tens of thousands of entries),
+  // this caused 1M ROI on lbm to time out at 600s vs ~108s linear
+  // extrapolation from 500K. std::deque has O(1) erase at the front,
+  // restoring linear scaling.
+  std::deque<ACTInfo> ACTs;
   std::deque<std::pair<uint64_t, uint8_t>> rhActions;
   RH_Detector *detector;
   uint64_t numPPages;
