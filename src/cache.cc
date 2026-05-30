@@ -20,6 +20,7 @@
 #include <iterator>
 #include <unordered_map>
 #include <cmath>
+#include <array>
 #include "champsim.h"
 #include "champsim_constants.h"
 #include "util.h"
@@ -903,29 +904,49 @@ void CACHE::recvACTInfo() {
     //   (186 ns,   117)   short regime upper bound per Sec 4.2
     //   (7800 ns,  5900)  worst-case at 7.8us (8Gb B-Die)
     //   (70200 ns, 53700) worst-case at 70.2us per Obs 1
-    auto luo_worst_rho_x100 = [](uint64_t raw_eact, double tras_ns) -> uint64_t {
-        double t_on = static_cast<double>(raw_eact) * tras_ns;
-        auto interp_log = [](double t, double t_lo, double t_hi,
-                             double r_lo, double r_hi) -> uint64_t {
-            double frac = (std::log(t) - std::log(t_lo)) /
-                          (std::log(t_hi) - std::log(t_lo));
-            double log_r = std::log(r_lo) + frac * (std::log(r_hi) - std::log(r_lo));
-            return static_cast<uint64_t>(std::exp(log_r) + 0.5);
-        };
-        if (t_on <= 36.0)      return 100;
-        if (t_on <= 186.0)     return interp_log(t_on, 36.0, 186.0, 100.0, 117.0);
-        if (t_on <= 7800.0)    return interp_log(t_on, 186.0, 7800.0, 117.0, 5900.0);
-        if (t_on <= 70200.0)   return interp_log(t_on, 7800.0, 70200.0, 5900.0, 53700.0);
-        // Long-tail extrapolation: linear in t_on past 70.2us.
-        return static_cast<uint64_t>(53700.0 * t_on / 70200.0 + 0.5);
-    };
+    // Per-ACT std::log/std::exp calls in the oracle nearly tripled the
+    // sim wall time on memory-heavy workloads (lbm timed out at 30 min
+    // under the original implementation). Replace with a precomputed
+    // lookup table covering eact in [1, LUO_TABLE_SIZE]. Eact values
+    // beyond that fall back to long-regime linear scaling (well outside
+    // our workloads' eact distribution).
+    //
     // tRAS in ns. champsim_constants.h only emits tRP / tRCD via config.py,
     // not tRAS, so we hardcode the DDR5 baseline value (32 ns) here. For
     // other DRAM configs, override via -DRP_TRAS_NS=<value> in CPPFLAGS.
 #ifndef RP_TRAS_NS
 #define RP_TRAS_NS 32.0
 #endif
-    uint64_t safety_rho_x100 = luo_worst_rho_x100(it->eact, RP_TRAS_NS);
+    constexpr size_t LUO_TABLE_SIZE = 257;
+    static const std::array<uint64_t, LUO_TABLE_SIZE> luo_table = []() {
+        std::array<uint64_t, LUO_TABLE_SIZE> t = {};
+        auto interp_log = [](double tv, double t_lo, double t_hi,
+                             double r_lo, double r_hi) -> uint64_t {
+            double frac = (std::log(tv) - std::log(t_lo)) /
+                          (std::log(t_hi) - std::log(t_lo));
+            double log_r = std::log(r_lo) + frac * (std::log(r_hi) - std::log(r_lo));
+            return static_cast<uint64_t>(std::exp(log_r) + 0.5);
+        };
+        for (size_t e = 0; e < LUO_TABLE_SIZE; ++e) {
+            double t_on = static_cast<double>(e) * RP_TRAS_NS;
+            if (e == 0)            t[e] = 100;   // never queried, but safe
+            else if (t_on <= 36.0) t[e] = 100;
+            else if (t_on <= 186.0)  t[e] = interp_log(t_on, 36.0, 186.0, 100.0, 117.0);
+            else if (t_on <= 7800.0) t[e] = interp_log(t_on, 186.0, 7800.0, 117.0, 5900.0);
+            else if (t_on <= 70200.0) t[e] = interp_log(t_on, 7800.0, 70200.0, 5900.0, 53700.0);
+            else                   t[e] = static_cast<uint64_t>(53700.0 * t_on / 70200.0 + 0.5);
+        }
+        return t;
+    }();
+    uint64_t raw_eact = it->eact;
+    uint64_t safety_rho_x100;
+    if (raw_eact < LUO_TABLE_SIZE) {
+        safety_rho_x100 = luo_table[raw_eact];
+    } else {
+        // Long-regime linear-in-t extrapolation; very rare path.
+        double t_on = static_cast<double>(raw_eact) * RP_TRAS_NS;
+        safety_rho_x100 = static_cast<uint64_t>(53700.0 * t_on / 70200.0 + 0.5);
+    }
     for (int dir = -1; dir <= 1; dir += 2) {
       if ((int)ro + dir >= 0 && (int)ro + dir < DRAM_ROWS) {
         uint64_t v_idx = (ro + dir) * (DRAM_CHANNELS * DRAM_BANKS * DRAM_RANKS)
