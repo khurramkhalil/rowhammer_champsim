@@ -50,6 +50,9 @@ extern uint8_t all_warmup_complete;
 #ifndef RP_VTRACK_ENABLE
 #define RP_VTRACK_ENABLE 0
 #endif
+#ifndef RP_VTRACK_V2_ENABLE
+#define RP_VTRACK_V2_ENABLE 0
+#endif
 #ifndef IDEAL_TRACKER
 #define IDEAL_TRACKER 0
 #endif
@@ -823,7 +826,7 @@ void CACHE::performRHActions() {
   int max_actions = 2;
 
   for (auto it = lower_level->rhActions.begin(); it != lower_level->rhActions.end();) {
-    assert(ART_ENABLE || HYDRA_ENABLE || IDEAL_TRACKER || VTRACK_ENABLE || START_ENABLE || RP_VTRACK_ENABLE);
+    assert(ART_ENABLE || HYDRA_ENABLE || IDEAL_TRACKER || VTRACK_ENABLE || START_ENABLE || RP_VTRACK_ENABLE || RP_VTRACK_V2_ENABLE);
     PACKET handle_pkt;
 
     handle_pkt.cpu = 0;
@@ -877,7 +880,7 @@ void CACHE::recvACTInfo() {
       continue;
     }
 
-    if ((ART_ENABLE || RP_VTRACK_ENABLE || VTRACK_ENABLE) && (writes_available_this_cycle == 0 || reads_available_this_cycle == 0)) {
+    if ((ART_ENABLE || RP_VTRACK_ENABLE || RP_VTRACK_V2_ENABLE || VTRACK_ENABLE) && (writes_available_this_cycle == 0 || reads_available_this_cycle == 0)) {
       // Don't have cache bandwidth, try next cycle...
       break;
     }
@@ -902,7 +905,7 @@ void CACHE::recvACTInfo() {
       }
     }
 #endif
-    if (ART_ENABLE && !RP_VTRACK_ENABLE && !VTRACK_ENABLE) { // ART tracker
+    if (ART_ENABLE && !RP_VTRACK_ENABLE && !RP_VTRACK_V2_ENABLE && !VTRACK_ENABLE) { // ART tracker
       writes_available_this_cycle--;
       reads_available_this_cycle--;
       s_num_ACT++;
@@ -1078,10 +1081,10 @@ void CACHE::recvACTInfo() {
         }
       }
     }
-    if (RP_VTRACK_ENABLE || VTRACK_ENABLE) {
+    if (RP_VTRACK_ENABLE || RP_VTRACK_V2_ENABLE || VTRACK_ENABLE) {
       writes_available_this_cycle--;
       reads_available_this_cycle--;
-      
+
       uint64_t eact = 1;
 #ifdef IMPRESS_N_ENABLE
       if (IMPRESS_N_ENABLE) {
@@ -1095,11 +1098,52 @@ void CACHE::recvACTInfo() {
       uint64_t scale_s = 1;
 #ifdef RP_VTRACK_ENABLE
       if (RP_VTRACK_ENABLE) {
-          scale_s = 16; 
+          scale_s = 16;
           eact = it->eact; // Use eact as the base density ρ(t_open)
 #ifdef RHO_MAX
           eact = eact * RHO_MAX;
 #endif
+      }
+#endif
+
+#ifdef RP_VTRACK_V2_ENABLE
+      // RP-VTrack v2: bucketed eact quantization at fixed-point scale s=4.
+      // Bucket weights designed to dominate the WORST-CASE Luo et al.
+      // ISCA 2023 disturbance envelope (Mfr S 8Gb B-Die, single-sided 50C):
+      //   eact=1        -> weight 1.00 (Luo=1.0 exact)
+      //   eact in [2,3] -> 1.25 (Luo_worst<=1.10, 14% safety margin)
+      //   eact in [4,7] -> 1.50 (Luo_worst<=1.42, 6% safety margin)
+      //   eact >= 8     -> ImPress fallback (Luo grows super-linearly)
+      // Expressed at fixed-point scale 4 as integers: {4, 5, 6, ImPress*4}.
+      // The tracker code below uses (eact * scale_s) as the increment and
+      // ((TRH/2) * scale_s) as the threshold; setting scale_s=4 below
+      // produces threshold=128 (= (TRH/2)*4 for TRH=64). To make the
+      // increment match the bucketed weight directly, we put the
+      // pre-scaled weight in 'eact' and divide scale_s out from the
+      // increment side only by storing 'eact' as the FULL scaled weight
+      // and using scale_s=1 in the increment but scale_s=4 in the
+      // threshold. Simpler: set eact such that eact * 4 = scaled_weight,
+      // i.e. eact = scaled_weight / 4 in real units -- but since we want
+      // integer math, we instead use scale_s=1 for increment and remap
+      // the threshold below via the RP_VTRACK_V2_THRESHOLD_SCALE constant.
+      if (RP_VTRACK_V2_ENABLE) {
+          uint64_t raw_eact = it->eact;
+          uint64_t scaled_w;  // weight at scale s=4 (integer)
+          if (raw_eact <= 1) {
+              scaled_w = 4;          // q=1.0 (scaled by 4)
+          } else if (raw_eact <= 3) {
+              scaled_w = 5;          // q=1.25
+          } else if (raw_eact <= 7) {
+              scaled_w = 6;          // q=1.5
+          } else {
+              uint64_t impress_w = raw_eact;
+#ifdef RHO_MAX
+              impress_w = impress_w * RHO_MAX;
+#endif
+              scaled_w = impress_w * 4;
+          }
+          eact = scaled_w;
+          scale_s = 1;  // CRA_ctr += eact * 1 = scaled_w; threshold below uses 4
       }
 #endif
 
@@ -1109,11 +1153,13 @@ void CACHE::recvACTInfo() {
           uint64_t victim_ro = ro + dir;
           uint64_t v_idx = victim_ro + DRAM_ROWS * (ba + DRAM_BANKS * (ra + DRAM_RANKS * ch));
           uint64_t set_idx = v_idx / rows_per_set;
-          
+
           uint32_t metadata_capacity = 16;
           if (RP_VTRACK_ENABLE) {
               metadata_capacity = 12; // Larger counters mean fewer fit in the 8-way LLC reservation
           }
+          // RP-VTrack v2 keeps 16 ways because counter is only ~10 bits
+          // (vs v1's 11-13 bits with scale_s=16 fixed-point).
           
           if (CRA_ctr[v_idx] == 0) {
               if (CRA_ctr_set[set_idx] < metadata_capacity) {
@@ -1148,10 +1194,19 @@ void CACHE::recvACTInfo() {
           else if (CRA_ctr[v_idx] > (7 * scale_s) && per_set_tracker_state[set_idx] < 2) per_set_tracker_state[set_idx] = 2;
           else if (CRA_ctr[v_idx] > (1 * scale_s) && per_set_tracker_state[set_idx] < 1) per_set_tracker_state[set_idx] = 1;
           
-          if (CRA_ctr[v_idx] >= ((RH_THRESHOLD / 2) * scale_s)) {
+          // Threshold: scale_s controls the fixed-point scale for the
+          // counter / threshold. v1 uses scale_s=16; v2 uses scale_s=1
+          // but increments by pre-scaled-4 weights, so threshold for v2
+          // is (TRH/2)*4 to match. We compute the effective threshold
+          // multiplier here.
+          uint64_t threshold_scale = scale_s;
+#ifdef RP_VTRACK_V2_ENABLE
+          if (RP_VTRACK_V2_ENABLE) threshold_scale = 4;
+#endif
+          if (CRA_ctr[v_idx] >= ((RH_THRESHOLD / 2) * threshold_scale)) {
               s_num_mits++;
               num_mits++;
-              uint64_t op_addr = BLOCK_SIZE * DRAM_COLUMNS * 
+              uint64_t op_addr = BLOCK_SIZE * DRAM_COLUMNS *
                         (ch + DRAM_CHANNELS * (ba + DRAM_BANKS * (ra + DRAM_RANKS * victim_ro)));
               lower_level->rhActions.push_back(std::make_pair(op_addr, RH_MITIGATION));
 #ifdef SAFETY_CHECK

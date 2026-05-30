@@ -743,6 +743,12 @@ with open(constants_header_name, 'wt') as wfp:
         wfp.write("#define RP_VTRACK_ENABLE 1\n")
     else:
         wfp.write("#define RP_VTRACK_ENABLE 0\n")
+    # RP-VTrack v2: bucketed-eact tracker. See paper/advisor/01_R1_DESIGN_PROPOSAL.md.
+    if config_file.get('RP_VTRACK_V2_ENABLE', 0):
+        print("[RH_DEFENSE] RP_VTRACK_V2 (bucketed eact) ENABLE")
+        wfp.write("#define RP_VTRACK_V2_ENABLE 1\n")
+    else:
+        wfp.write("#define RP_VTRACK_V2_ENABLE 0\n")
     if config_file.get('IMPRESS_N_ENABLE', 0):
         print("[RH_DEFENSE] IMPRESS_N ENABLE")
         wfp.write("#define IMPRESS_N_ENABLE 1\n")
