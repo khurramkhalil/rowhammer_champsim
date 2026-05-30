@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <iterator>
 #include <unordered_map>
+#include <cmath>
 #include "champsim.h"
 #include "champsim_constants.h"
 #include "util.h"
