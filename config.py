@@ -749,6 +749,11 @@ with open(constants_header_name, 'wt') as wfp:
         wfp.write("#define RP_VTRACK_V2_ENABLE 1\n")
     else:
         wfp.write("#define RP_VTRACK_V2_ENABLE 0\n")
+    # Chip-tuned (mean-case Luo) variant. Only safe with per-chip
+    # characterization. R2 stretch experiment.
+    if config_file.get('RP_VTRACK_V2_AGGR', 0):
+        print("[RH_DEFENSE] RP_VTRACK_V2_AGGR (mean-case Luo weights) ENABLE")
+        wfp.write("#define RP_VTRACK_V2_AGGR 1\n")
     if config_file.get('IMPRESS_N_ENABLE', 0):
         print("[RH_DEFENSE] IMPRESS_N ENABLE")
         wfp.write("#define IMPRESS_N_ENABLE 1\n")

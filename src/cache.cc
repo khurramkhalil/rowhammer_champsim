@@ -1181,19 +1181,39 @@ void CACHE::recvACTInfo() {
       if (RP_VTRACK_V2_ENABLE) {
           uint64_t raw_eact = it->eact;
           uint64_t scaled_w;  // weight at scale s=4 (integer)
-          if (raw_eact <= 1) {
-              scaled_w = 4;          // q=1.0 (scaled by 4)
-          } else if (raw_eact <= 3) {
-              scaled_w = 5;          // q=1.25
-          } else if (raw_eact <= 7) {
-              scaled_w = 6;          // q=1.5
-          } else {
+          // Default ("conservative"): bucket weights dominate WORST-CASE
+          // Luo (Mfr S 8Gb B-Die). When RP_VTRACK_V2_AGGR is defined, use
+          // the looser MEAN-Luo bucket weights instead -- safe on the
+          // typical die but unsafe on the worst-case observed chip. This
+          // is the chip-tuned variant proposed for R2 hardening; intended
+          // for systems with chip-level characterization, e.g. server
+          // memory with per-DIMM RH calibration data.
+#ifdef RP_VTRACK_V2_AGGR
+          // Mean-Luo bucket weights:
+          //   eact[2,3] -> 1.0  (mean rho <= 1.0)
+          //   eact[4,7] -> 1.25 (mean rho <= 1.2)
+          if (raw_eact <= 1)      scaled_w = 4;   // 1.0
+          else if (raw_eact <= 3) scaled_w = 4;   // 1.0 (vs conservative 1.25)
+          else if (raw_eact <= 7) scaled_w = 5;   // 1.25 (vs conservative 1.5)
+          else {
               uint64_t impress_w = raw_eact;
 #ifdef RHO_MAX
               impress_w = impress_w * RHO_MAX;
 #endif
               scaled_w = impress_w * 4;
           }
+#else
+          if (raw_eact <= 1)      scaled_w = 4;   // 1.0
+          else if (raw_eact <= 3) scaled_w = 5;   // 1.25
+          else if (raw_eact <= 7) scaled_w = 6;   // 1.5
+          else {
+              uint64_t impress_w = raw_eact;
+#ifdef RHO_MAX
+              impress_w = impress_w * RHO_MAX;
+#endif
+              scaled_w = impress_w * 4;
+          }
+#endif
           eact = scaled_w;
           scale_s = 1;  // CRA_ctr += eact * 1 = scaled_w; threshold below uses 4
       }
