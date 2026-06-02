@@ -1181,20 +1181,33 @@ void CACHE::recvACTInfo() {
       if (RP_VTRACK_V2_ENABLE) {
           uint64_t raw_eact = it->eact;
           uint64_t scaled_w;  // weight at scale s=4 (integer)
-          // Default ("conservative"): bucket weights dominate WORST-CASE
-          // Luo (Mfr S 8Gb B-Die). When RP_VTRACK_V2_AGGR is defined, use
-          // the looser MEAN-Luo bucket weights instead -- safe on the
-          // typical die but unsafe on the worst-case observed chip. This
-          // is the chip-tuned variant proposed for R2 hardening; intended
-          // for systems with chip-level characterization, e.g. server
-          // memory with per-DIMM RH calibration data.
-#ifdef RP_VTRACK_V2_AGGR
-          // Mean-Luo bucket weights:
-          //   eact[2,3] -> 1.0  (mean rho <= 1.0)
-          //   eact[4,7] -> 1.25 (mean rho <= 1.2)
+          // Three operating points (08_R2_OPEN_ITEMS.md item 5, item 6):
+          //
+          //   default: weights {1.0, 1.25, 1.5}  -> safe vs worst-case Luo
+          //                                          (Mfr S 8Gb B-Die 50C SS)
+          //   AGGR:    weights {1.0, 1.0, 1.25}  -> safe vs mean-Luo; unsafe
+          //                                          on worst chip but useful
+          //                                          with per-chip calibration
+          //   STRICT:  weights {1.0, 1.25, 2.0}  -> safe vs 80C double-sided
+          //                                          ultra-worst envelope
+          //
+          // Exactly one of RP_VTRACK_V2_AGGR / RP_VTRACK_V2_STRICT may be
+          // defined; if both, STRICT wins.
+#ifdef RP_VTRACK_V2_STRICT
           if (raw_eact <= 1)      scaled_w = 4;   // 1.0
-          else if (raw_eact <= 3) scaled_w = 4;   // 1.0 (vs conservative 1.25)
-          else if (raw_eact <= 7) scaled_w = 5;   // 1.25 (vs conservative 1.5)
+          else if (raw_eact <= 3) scaled_w = 5;   // 1.25
+          else if (raw_eact <= 7) scaled_w = 8;   // 2.0  (vs default 1.5; safe vs Luo 80C-DS rho ~= 1.83)
+          else {
+              uint64_t impress_w = raw_eact;
+#ifdef RHO_MAX
+              impress_w = impress_w * RHO_MAX;
+#endif
+              scaled_w = impress_w * 4;
+          }
+#elif defined(RP_VTRACK_V2_AGGR)
+          if (raw_eact <= 1)      scaled_w = 4;   // 1.0
+          else if (raw_eact <= 3) scaled_w = 4;   // 1.0  (vs default 1.25)
+          else if (raw_eact <= 7) scaled_w = 5;   // 1.25 (vs default 1.5)
           else {
               uint64_t impress_w = raw_eact;
 #ifdef RHO_MAX
